@@ -85,19 +85,20 @@ async function fetchWithTimeout(
   }
 }
 
-async function fetchHtml(url: string): Promise<string> {
+async function fetchTextWithRetries(url: string, expectHtml: boolean): Promise<string> {
   const headers = {
     "user-agent": "rss-feeds-bot/1.0 (GitHub Actions; contact via repo issues)",
-    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "accept": expectHtml
+      ? "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+      : "application/rss+xml,application/xml;q=0.9,*/*;q=0.8",
     "accept-language": "en-AU,en;q=0.9",
     "referer": "https://www.childsafety.gov.au/",
   };
 
-  // 3 attempts, increasing timeout + backoff
   const attempts = [
-    { timeout: 30000, backoff: 800 },
-    { timeout: 45000, backoff: 1500 },
-    { timeout: 60000, backoff: 2500 },
+    { timeout: 30000, backoff: 1200 },
+    { timeout: 45000, backoff: 2000 },
+    { timeout: 60000, backoff: 3000 },
   ];
 
   let lastErr: any;
@@ -112,29 +113,24 @@ async function fetchHtml(url: string): Promise<string> {
         throw new Error(`Fetch failed ${res.status} ${res.statusText}: ${snippet}`);
       }
 
-      const ct = res.headers.get("content-type") || "";
-      if (!ct.includes("text/html")) {
-        const snippet = (await res.text()).slice(0, 200);
-        throw new Error(`Not HTML (content-type=${ct}): ${snippet}`);
-      }
-
       return await res.text();
     } catch (e: any) {
       lastErr = e;
-      if (i < attempts.length - 1) {
-        await sleep(attempts[i].backoff);
-      }
+      if (i < attempts.length - 1) await sleep(attempts[i].backoff);
     }
   }
 
   throw lastErr;
 }
 
-async function fetchChildSafetyNews(): Promise<FeedItem[]> {
+/**
+ * Primary attempt: scrape ChildSafety listing HTML
+ */
+async function fetchChildSafetyNewsFromHtml(): Promise<FeedItem[]> {
   const listUrl = "https://www.childsafety.gov.au/news";
-  const html = await fetchHtml(listUrl);
-  const $ = load(html);
+  const html = await fetchTextWithRetries(listUrl, true);
 
+  const $ = load(html);
   const items: FeedItem[] = [];
 
   const links = $("main a[href^='/news/']").toArray();
@@ -160,13 +156,62 @@ async function fetchChildSafetyNews(): Promise<FeedItem[]> {
   return deduped.slice(0, 15);
 }
 
+/**
+ * Fallback attempt: pull items from your Worker RSS feed (already working)
+ */
+async function fetchChildSafetyNewsFromWorkerRss(): Promise<FeedItem[]> {
+  const workerRssUrl = "https://rsshub-wa.childsafetyawarenesswa.workers.dev/feeds/childsafety/news";
+  const xml = await fetchTextWithRetries(workerRssUrl, false);
+
+  // Cheerio can parse XML fine for our simple needs
+  const $ = load(xml, { xmlMode: true });
+
+  const items: FeedItem[] = [];
+  $("item").each((_, itemEl) => {
+    const title = ($(itemEl).find("title").text() || "").trim();
+    const link = ($(itemEl).find("link").text() || "").trim();
+    const pubDate = ($(itemEl).find("pubDate").text() || "").trim();
+    const description = ($(itemEl).find("description").text() || "").trim();
+    const guid = ($(itemEl).find("guid").text() || "").trim() || `childsafety:${link}`;
+
+    if (!title || !link) return;
+
+    items.push({
+      title,
+      link,
+      pubDate: pubDate || undefined,
+      description: description || undefined,
+      guid,
+    });
+  });
+
+  // Dedup + cap
+  const deduped = Array.from(new Map(items.map((i) => [i.link, i])).values());
+  return deduped.slice(0, 15);
+}
+
 async function main() {
   const outDir = path.join(process.cwd(), "public", "feeds", "childsafety");
   await mkdir(outDir, { recursive: true });
   const outPath = path.join(outDir, "news.xml");
 
   try {
-    const items = await fetchChildSafetyNews();
+    // 1) Try direct HTML scrape first
+    let items: FeedItem[] = [];
+    try {
+      items = await fetchChildSafetyNewsFromHtml();
+      console.log(`Direct scrape OK (${items.length} items)`);
+    } catch (e: any) {
+      console.warn("Direct scrape failed; falling back to Worker RSS.\n", e?.message || e);
+      // 2) Fallback to Worker RSS (should keep your Pages feed populated)
+      items = await fetchChildSafetyNewsFromWorkerRss();
+      console.log(`Worker RSS fallback OK (${items.length} items)`);
+    }
+
+    if (!items.length) {
+      throw new Error("No items returned from direct scrape or fallback.");
+    }
+
     const rss = toRss(
       "ChildSafety.gov.au - News (Latest)",
       "https://www.childsafety.gov.au/news",
@@ -177,9 +222,9 @@ async function main() {
     console.log(`Wrote ${outPath} (${items.length} items)`);
   } catch (e: any) {
     const msg = e?.stack || e?.message || String(e);
-    console.error("Fetch failed. Keeping last good feed if present.\n", msg);
+    console.error("All fetch methods failed. Keeping last good feed if present.\n", msg);
 
-    // Only write a placeholder if this is the very first run (no existing file).
+    // Only write a placeholder if this is the very first run (no existing file)
     if (!(await fileExists(outPath))) {
       const rss = toRss(
         "ChildSafety.gov.au - News (Latest)",
