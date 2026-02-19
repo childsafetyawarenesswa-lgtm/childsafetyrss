@@ -95,9 +95,9 @@ async function fetchHtml(url: string): Promise<string> {
 
   // 3 attempts, increasing timeout + backoff
   const attempts = [
-    { timeout: 15000, backoff: 800 },
-    { timeout: 25000, backoff: 1500 },
-    { timeout: 35000, backoff: 2500 },
+    { timeout: 30000, backoff: 800 },
+    { timeout: 45000, backoff: 1500 },
+    { timeout: 60000, backoff: 2500 },
   ];
 
   let lastErr: any;
