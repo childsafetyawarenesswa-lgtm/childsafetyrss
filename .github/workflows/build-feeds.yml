@@ -8,7 +8,7 @@ on:
 permissions:
   pages: write
   id-token: write
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -27,6 +27,14 @@ jobs:
 
       - name: Generate feeds
         run: npm run generate
+
+      - name: Commit generated feeds (if changed)
+        run: |
+          git config user.name "rss-feeds-bot"
+          git config user.email "rss-feeds-bot@users.noreply.github.com"
+          git add public/feeds
+          git diff --cached --quiet || git commit -m "Update feeds"
+          git push
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
