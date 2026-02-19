@@ -1,5 +1,7 @@
+// src/generate.ts
 import { load } from "cheerio";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, access } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 
 type FeedItem = {
@@ -55,7 +57,20 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function fetchWithTimeout(url: string, ms: number, headers: Record<string, string>) {
+async function fileExists(p: string) {
+  try {
+    await access(p, fsConstants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function fetchWithTimeout(
+  url: string,
+  ms: number,
+  headers: Record<string, string>
+) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), ms);
 
@@ -89,7 +104,7 @@ async function fetchHtml(url: string): Promise<string> {
 
   for (let i = 0; i < attempts.length; i++) {
     try {
-      const { timeout, backoff } = attempts[i];
+      const { timeout } = attempts[i];
       const res = await fetchWithTimeout(url, timeout, headers);
 
       if (!res.ok) {
@@ -106,7 +121,6 @@ async function fetchHtml(url: string): Promise<string> {
       return await res.text();
     } catch (e: any) {
       lastErr = e;
-      // backoff before retry (except after last attempt)
       if (i < attempts.length - 1) {
         await sleep(attempts[i].backoff);
       }
@@ -124,7 +138,6 @@ async function fetchChildSafetyNews(): Promise<FeedItem[]> {
   const items: FeedItem[] = [];
 
   const links = $("main a[href^='/news/']").toArray();
-
   for (const a of links) {
     const el = $(a);
     const href = (el.attr("href") || "").trim();
@@ -136,36 +149,9 @@ async function fetchChildSafetyNews(): Promise<FeedItem[]> {
 
     const link = new URL(href, "https://www.childsafety.gov.au").toString();
 
-    const container =
-      el.closest("article").length
-        ? el.closest("article")
-        : el.closest("li").length
-          ? el.closest("li")
-          : el.closest("div").length
-            ? el.closest("div")
-            : el.parent();
-
-    let pubDate = "";
-    const timeEl = container.find("time").first();
-    if (timeEl.length) {
-      pubDate = (timeEl.attr("datetime") || "").trim() || timeEl.text().trim();
-    }
-
-    let description = "";
-    const ps = container
-      .find("p")
-      .toArray()
-      .map((p) => $(p).text().replace(/\s+/g, " ").trim())
-      .filter(Boolean);
-
-    description = ps.find((t) => t && t !== title) || "";
-    if (description.length > 500) description = description.slice(0, 497) + "...";
-
     items.push({
       title,
       link,
-      pubDate: pubDate || undefined,
-      description: description || undefined,
       guid: `childsafety:${link}`,
     });
   }
@@ -174,40 +160,48 @@ async function fetchChildSafetyNews(): Promise<FeedItem[]> {
   return deduped.slice(0, 15);
 }
 
-async function writeFeedFile(items: FeedItem[], note?: string) {
+async function main() {
   const outDir = path.join(process.cwd(), "public", "feeds", "childsafety");
   await mkdir(outDir, { recursive: true });
+  const outPath = path.join(outDir, "news.xml");
 
-  const rss = toRss(
-    "ChildSafety.gov.au - News (Latest)",
-    "https://www.childsafety.gov.au/news",
-    items.length
-      ? items
-      : [
+  try {
+    const items = await fetchChildSafetyNews();
+    const rss = toRss(
+      "ChildSafety.gov.au - News (Latest)",
+      "https://www.childsafety.gov.au/news",
+      items
+    );
+
+    await writeFile(outPath, rss, "utf8");
+    console.log(`Wrote ${outPath} (${items.length} items)`);
+  } catch (e: any) {
+    const msg = e?.stack || e?.message || String(e);
+    console.error("Fetch failed. Keeping last good feed if present.\n", msg);
+
+    // Only write a placeholder if this is the very first run (no existing file).
+    if (!(await fileExists(outPath))) {
+      const rss = toRss(
+        "ChildSafety.gov.au - News (Latest)",
+        "https://www.childsafety.gov.au/news",
+        [
           {
             title: "Feed temporarily unavailable",
             link: "https://www.childsafety.gov.au/news",
             pubDate: new Date().toUTCString(),
-            description: note || "Upstream fetch failed during scheduled build. Will retry next run.",
+            description: msg.slice(0, 800),
             guid: `childsafety:unavailable:${Date.now()}`,
           },
         ]
-  );
+      );
+      await writeFile(outPath, rss, "utf8");
+      console.log(`Wrote placeholder ${outPath}`);
+    } else {
+      console.log("Existing feed found — leaving it unchanged.");
+    }
 
-  const outPath = path.join(outDir, "news.xml");
-  await writeFile(outPath, rss, "utf8");
-  console.log(`Wrote ${outPath} (${items.length} items)`);
-}
-
-async function main() {
-  try {
-    const items = await fetchChildSafetyNews();
-    await writeFeedFile(items);
-  } catch (e: any) {
-    // Do NOT fail the workflow; publish a placeholder RSS so Pages deploy succeeds
-    const msg = e?.stack || e?.message || String(e);
-    console.error("Fetch failed; writing placeholder feed instead.\n", msg);
-    await writeFeedFile([], msg.slice(0, 800));
+    // Do NOT fail the workflow
+    return;
   }
 }
 
