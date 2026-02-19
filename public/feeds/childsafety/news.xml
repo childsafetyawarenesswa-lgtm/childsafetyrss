@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+  <title>ChildSafety.gov.au - News (Latest)</title>
+  <link>https://www.childsafety.gov.au/news</link>
+  <description>ChildSafety.gov.au - News (Latest)</description>
+  <lastBuildDate>Thu, 19 Feb 2026 04:32:29 GMT</lastBuildDate>
+  
+  <item>
+    <title>Feed temporarily unavailable</title>
+    <link>https://www.childsafety.gov.au/news</link>
+    <guid isPermaLink="false">childsafety:unavailable:1771475549993</guid>
+    <pubDate>Thu, 19 Feb 2026 04:32:29 GMT</pubDate>
+    <description>AbortError: This operation was aborted
+    at node:internal/deps/undici/undici:14902:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async fetchWithTimeout (file:///home/runner/work/childsafetyrss/childsafetyrss/src/generate.ts:60:16)
+    at async fetchHtml (file:///home/runner/work/childsafetyrss/childsafetyrss/src/generate.ts:87:25)
+    at async fetchChildSafetyNews (file:///home/runner/work/childsafetyrss/childsafetyrss/src/generate.ts:110:18)
+    at async main (file:///home/runner/work/childsafetyrss/childsafetyrss/src/generate.ts:139:23)</description>
+  </item>
+</channel>
+</rss>
