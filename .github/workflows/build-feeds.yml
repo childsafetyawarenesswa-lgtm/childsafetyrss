@@ -3,17 +3,16 @@ name: Build RSS Feeds
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 * * * *"  # hourly (offset to avoid top-of-hour load)
+    - cron: "17 * * * *"
 
 permissions:
-  contents: write
   pages: write
   id-token: write
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,20 +22,11 @@ jobs:
         with:
           node-version: 20
 
-
       - name: Install deps
         run: npm install
 
       - name: Generate feeds
         run: npm run generate
-
-      - name: Commit changes (if any)
-        run: |
-          git config user.name "rss-feeds-bot"
-          git config user.email "rss-feeds-bot@users.noreply.github.com"
-          git add public/feeds
-          git diff --cached --quiet || git commit -m "Update feeds"
-          git push
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
@@ -45,4 +35,3 @@ jobs:
 
       - name: Deploy to GitHub Pages
         uses: actions/deploy-pages@v4
-
