@@ -25,7 +25,7 @@ jobs:
 
 
       - name: Install deps
-        run: npm ci
+        run: npm install
 
       - name: Generate feeds
         run: npm run generate
